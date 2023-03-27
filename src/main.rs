@@ -1,19 +1,16 @@
 #![allow(unused)]
 
-use std::{
-    string::ToString,
-    ops::Add,
-    thread
-};
+use std::{ops::Add, string::ToString, thread};
 
 const THRESHOLD: usize = 2;
 
-fn split_work<T, R>(data: Vec<T>, func: fn(T) -> R) -> Vec<R> 
+fn split_work<T, R>(data: Vec<T>, func: fn(T) -> R) -> Vec<R>
 where
     // generics are Clone for the sake of simplicity,
     // since the input data type is Vec<T>
-    T: Clone + Send + 'static, 
-    R: Clone + Send + 'static {
+    T: Clone + Send + 'static,
+    R: Clone + Send + 'static,
+{
     let mut result: Vec<Vec<R>> = vec![];
 
     // Do not split if the input data size is less
@@ -22,21 +19,18 @@ where
         return data.into_iter().map(func).collect();
     }
 
-    // Otherwise, split the data 
-    let chunks: Vec<Vec<T>> = data
-        .chunks(THRESHOLD)
-        .map(|s| s.into())
-        .collect();
+    // Otherwise, split the data
+    let chunks: Vec<Vec<T>> = data.chunks(THRESHOLD).map(|s| s.into()).collect();
 
     // Compute the portions in separate threads
     for chunk in chunks.into_iter() {
         result.push(
             thread::spawn(move || {
-                println!("Split");
+                println!("Split. {:?}", thread::current().id());
                 chunk.into_iter().map(func).collect::<Vec<R>>()
             })
             .join()
-            .unwrap()
+            .unwrap(),
         );
     }
 
@@ -48,19 +42,22 @@ where
 // implements the *to_string* method
 fn to_string<T>(input: T) -> String
 where
-    T: ToString {
+    T: ToString,
+{
     input.to_string()
 }
 
 // Returns a doubled value
 fn add_itself<T>(input: T) -> T
 where
-    T: Add + Add<Output = T> + Copy {
+    T: Add + Add<Output = T> + Copy,
+{
     input + input
 }
 
 fn main() {
-    let data: Vec<i32> = vec![1, 2, 3, 4, 5];
+    let data: Vec<i32> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
+
     dbg!(&data);
     let result = split_work(data, to_string as fn(i32) -> String);
     dbg!(&result);
@@ -75,7 +72,7 @@ mod tests {
 
     #[test]
     fn test_ints_to_string() {
-        let data: Vec<i32> = vec![1, 2, 3,  5, 6];
+        let data: Vec<i32> = vec![1, 2, 3, 5, 6];
         let data_length = data.len();
         let result = split_work(data, to_string as fn(i32) -> String);
 
@@ -109,6 +106,23 @@ mod tests {
         let result = split_work(data, add_itself as fn(f32) -> f32);
 
         assert_eq!(result, vec![2.2, 4.4, 6.6, 8.8, 11.0, 13.2]);
+        assert_eq!(result.len(), data_length);
+    }
+
+    #[test]
+    fn more_data() {
+        let data: Vec<i32> = vec![
+            17, 100, 28, 6, 59, 36, 80, 78, 89, 97, 78, 40, 59, 26, 88, 41, 39, 100, 77, 87, 90,
+            99, 56, 50, 49, 4, 98, 64, 3, 20, 43, 61, 49, 43, 22, 66, 43, 74, 52, 16, 1, 50, 89,
+            87, 47, 89, 94, 72, 52, 38, 28, 48, 67, 79, 12, 11, 33, 10, 3, 32, 22, 49, 26, 37, 78,
+            57, 89, 73, 17, 20, 59, 40, 38, 16, 6, 80, 49, 54, 20, 3, 32, 72, 66, 15, 94, 31, 29,
+            83, 42, 30, 26, 98, 41, 30, 68, 39, 90, 63, 81, 17,
+        ];
+        let data_length = data.len();
+        let data_doubled: Vec<i32> = data.clone().into_iter().map(|i| i + i).collect();
+        let result = split_work(data, add_itself as fn(i32) -> i32);
+
+        assert_eq!(result, data_doubled);
         assert_eq!(result.len(), data_length);
     }
 }
