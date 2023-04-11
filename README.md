@@ -5,7 +5,7 @@ This code implements a basic function to split some generic computational work b
 Inputs:
 
 1. A Vec of type T
-2. A function fn(T) -> R
+2. A function fn(&T) -> R
 
 Returns:
 
