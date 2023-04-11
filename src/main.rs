@@ -1,33 +1,48 @@
 #![allow(unused)]
 
-use std::{ops::Add, string::ToString, thread};
+use std::{marker::Sync, ops::Add, panic, process, string::ToString, sync::Arc, thread};
 
 const THRESHOLD: usize = 2;
 
-fn split_work<T, R>(data: Vec<T>, func: fn(T) -> R) -> Vec<R>
+fn split_work<T, R>(data: Vec<T>, func: fn(&T) -> R) -> Vec<R>
 where
-    // generics are Clone for the sake of simplicity,
-    // since the input data type is Vec<T>
-    T: Clone + Send + 'static,
+    T: Send + Sync + 'static,
     R: Clone + Send + 'static,
 {
     let mut result: Vec<Vec<R>> = vec![];
 
+    // Set the hook to handle panics
+    panic::set_hook(Box::new(move |panic_info| {
+        println!("Thread panicked. No processing.");
+        process::exit(0);
+    }));
+
     // Do not split if the input data size is less
     // than the THRESHOLD value
     if data.len() <= THRESHOLD {
-        return data.into_iter().map(func).collect();
+        return data.iter().map(func).collect();
     }
 
-    // Otherwise, split the data
-    let chunks: Vec<Vec<T>> = data.chunks(THRESHOLD).map(|s| s.into()).collect();
+    // Count the number of chunks
+    let mut chunks_count = data.len() / THRESHOLD;
+    if data.len() % THRESHOLD > 0 {
+        chunks_count += 1;
+    }
+
+    // Create Arc to pass the data into threads
+    let arc_data: Arc<Vec<T>> = Arc::new(data);
 
     // Compute the portions in separate threads
-    for chunk in chunks.into_iter() {
+    for i in 0..chunks_count {
+        let d = Arc::clone(&arc_data);
         result.push(
             thread::spawn(move || {
-                println!("Split. {:?}", thread::current().id());
-                chunk.into_iter().map(func).collect::<Vec<R>>()
+                let id = thread::current().id();
+                println!("Split. {:?}, {}", id, i);
+
+                // Select the chunk for current thread and apply the function
+                let chunks: &[T] = d.chunks(THRESHOLD).nth(i).unwrap();
+                chunks.iter().map(|s| func(s)).collect()
             })
             .join()
             .unwrap(),
@@ -35,12 +50,13 @@ where
     }
 
     // Unite the computed data and return
+    // R is Clone to allow the result to be concatenated
     result.concat()
 }
 
 // Returns a string from a type that
 // implements the *to_string* method
-fn to_string<T>(input: T) -> String
+fn to_string<T>(input: &T) -> String
 where
     T: ToString,
 {
@@ -48,18 +64,27 @@ where
 }
 
 // Returns a doubled value
-fn add_itself<T>(input: T) -> T
+fn add_itself<T>(input: &T) -> T
 where
     T: Add + Add<Output = T> + Copy,
 {
-    input + input
+    *input + *input
+}
+
+// Panics
+fn will_panic<T>(input: &T) -> T
+where
+    T: Add + Add<Output = T> + Copy,
+{
+    panic!();
+    *input + *input
 }
 
 fn main() {
     let data: Vec<i32> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
 
     dbg!(&data);
-    let result = split_work(data, to_string as fn(i32) -> String);
+    let result = split_work(data, add_itself as fn(&i32) -> i32);
     dbg!(&result);
 }
 
@@ -68,13 +93,14 @@ mod tests {
     use super::*;
 
     // Vectors of i32 and f32 are tested with each of the
-    // functions (to_string, add_itself)
+    // functions (to_string, add_itself).
+    // The last test checks the panic behavior.
 
     #[test]
     fn test_ints_to_string() {
         let data: Vec<i32> = vec![1, 2, 3, 5, 6];
         let data_length = data.len();
-        let result = split_work(data, to_string as fn(i32) -> String);
+        let result = split_work(data, to_string as fn(&i32) -> String);
 
         assert_eq!(result, vec!["1", "2", "3", "5", "6"]);
         assert_eq!(result.len(), data_length);
@@ -83,7 +109,7 @@ mod tests {
     fn test_floats_to_string() {
         let data: Vec<f32> = vec![1.1, 2.2, 3.3, 4.4, 5.5, 6.6];
         let data_length = data.len();
-        let result = split_work(data, to_string as fn(f32) -> String);
+        let result = split_work(data, to_string as fn(&f32) -> String);
 
         assert_eq!(result, vec!["1.1", "2.2", "3.3", "4.4", "5.5", "6.6"]);
         assert_eq!(result.len(), data_length);
@@ -93,7 +119,7 @@ mod tests {
     fn test_ints_add_itself() {
         let data: Vec<i32> = vec![1, 2, 3, 4, 5, 6];
         let data_length = data.len();
-        let result = split_work(data, add_itself as fn(i32) -> i32);
+        let result = split_work(data, add_itself as fn(&i32) -> i32);
 
         assert_eq!(result, vec![2, 4, 6, 8, 10, 12]);
         assert_eq!(result.len(), data_length);
@@ -103,7 +129,7 @@ mod tests {
     fn test_floats_add_itself() {
         let data: Vec<f32> = vec![1.1, 2.2, 3.3, 4.4, 5.5, 6.6];
         let data_length = data.len();
-        let result = split_work(data, add_itself as fn(f32) -> f32);
+        let result = split_work(data, add_itself as fn(&f32) -> f32);
 
         assert_eq!(result, vec![2.2, 4.4, 6.6, 8.8, 11.0, 13.2]);
         assert_eq!(result.len(), data_length);
@@ -120,9 +146,19 @@ mod tests {
         ];
         let data_length = data.len();
         let data_doubled: Vec<i32> = data.clone().into_iter().map(|i| i + i).collect();
-        let result = split_work(data, add_itself as fn(i32) -> i32);
+        let result = split_work(data, add_itself as fn(&i32) -> i32);
 
         assert_eq!(result, data_doubled);
+        assert_eq!(result.len(), data_length);
+    }
+
+    #[test]
+    fn panics() {
+        let data: Vec<f32> = vec![1.1, 2.2, 3.3, 4.4, 5.5, 6.6];
+        let data_length = data.len();
+        let result = split_work(data, will_panic as fn(&f32) -> f32);
+
+        assert_eq!(result, vec![2.2, 4.4, 6.6, 8.8, 11.0, 13.2]);
         assert_eq!(result.len(), data_length);
     }
 }
